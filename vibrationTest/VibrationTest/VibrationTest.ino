@@ -5,10 +5,9 @@ int tooQuietPin = 7;
 void setup() {
   // put your setup code here, to run once:
   ledcAttach(vPin, 20000, 8);
-  pinMode(tooLoudPin, INPUT);
-  pinMode(tooQuietPin, INPUT);
-  digitalWrite(tooLoudPin, HIGH);
-  digitalWrite(tooQuietPin, HIGH);
+  pinMode(tooLoudPin, INPUT_PULLUP);
+  pinMode(tooQuietPin, INPUT_PULLUP);
+  Serial.begin(9600);
 }
 
 void loop() {
@@ -24,16 +23,17 @@ void loop() {
 }
 
 void tooQuiet() {
-  for (int i = 0; i < 255; i++) {
-    ledcWrite(vPin, 0);
+  for (int i = 32; i < 255; i += 8) {
+    ledcWrite(vPin, i);
+    delay(50);
   }
-  ledcWrite(vPin, 255);}
+  ledcWrite(vPin, 0);
+}
 
 void tooLoud() {
-  for (int i = 0; i < 255; i++) {
+  for (int i = 255; i > 32; i -= 8) {
     ledcWrite(vPin, i);
-    delay(10);
-    ledcWrite(vPin, 0);
-    delay(10);
+    delay(50);
   }
+  ledcWrite(vPin, 0);
 }
