@@ -14,7 +14,7 @@ void loop() {
   Serial.print(digitalRead(tooLoudPin));
   Serial.print(" ");
   Serial.println(digitalRead(tooQuietPin));
-  delay(200);
+  delay(10);
 
   if (digitalRead(tooLoudPin) == 0) {
     tooLoud();
@@ -24,9 +24,10 @@ void loop() {
 }
 
 void tooQuiet() {
+  for (int i = 0; i < 255; i++) {
+    ledcWrite(vPin, 0);
+  }
   ledcWrite(vPin, 255);
-  delay(1000);
-  ledcWrite(vPin, 0);
 }
 
 void tooLoud() {
