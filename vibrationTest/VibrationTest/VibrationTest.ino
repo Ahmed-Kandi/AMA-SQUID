@@ -1,17 +1,30 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
 int vPin = 5;
 int tooLoudPin = 6;
 int tooQuietPin = 7;
 int tooFastPin = 8;
 int tooSlowPin = 9;
 
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
 void setup() {
-  // put your setup code here, to run once:
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+
   ledcAttach(vPin, 20000, 8);
   pinMode(tooLoudPin, INPUT_PULLUP);
   pinMode(tooQuietPin, INPUT_PULLUP);
   pinMode(tooFastPin, INPUT_PULLUP);
   pinMode(tooSlowPin, INPUT_PULLUP);
   Serial.begin(9600);
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.display();
 }
 
 void loop() {
@@ -29,6 +42,7 @@ void loop() {
 }
 
 void tooLoud() {
+  sendToDisplay("Too Loud!");
   for (int i = 255; i > 32; i -= 8) {
     ledcWrite(vPin, i);
     delay(50);
@@ -37,6 +51,7 @@ void tooLoud() {
 }
 
 void tooQuiet() {
+  sendToDisplay("Too Quiet!");
   for (int i = 32; i < 255; i += 8) {
     ledcWrite(vPin, i);
     delay(50);
@@ -45,6 +60,7 @@ void tooQuiet() {
 }
 
 void tooFast() {
+  sendToDisplay("Too Fast!");
   for (int i = 0; i < 3; i++) {
     ledcWrite(vPin, 255);
     delay(100);
@@ -60,6 +76,7 @@ void tooFast() {
 }
 
 void tooSlow() {
+  sendToDisplay("Too Slow!");
   for (int i = 500; i >= 100; i -= 100) {
   ledcWrite(vPin, 255);
   delay(100);
@@ -72,4 +89,13 @@ void tooSlow() {
     ledcWrite(vPin, 0);
     delay(75);
   }
+}
+
+void sendToDisplay(String message) {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  Serial.print("Displaying: ");
+  Serial.println(message);
+  display.println(message);
+  display.display();
 }
