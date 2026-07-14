@@ -2,219 +2,402 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// --- DISPLAY SETUP ---
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+const int MIC_PIN   = A0;
+const int MOTOR_PIN = 5;
 
-// --- PIN DEFINITIONS ---
-const int micPin = A0;
-const int vPin = 5; // Replace with your actual vibration motor pin
+const int BTN_CALIBRATE  = 6;   // in loop(): tests the "too loud" pattern
+const int BTN_TEST_QUIET = 7;   // in loop(): tests the "too quiet" pattern
 
-// Renamed your 4 button pins for their new jobs
-const int btnMaxUpPin = 6;   
-const int btnMaxDownPin = 7; 
-const int btnMinUpPin = 8;   
-const int btnMinDownPin = 9; 
+const int MOTOR_PWM_FREQ = 20000;  // 20 kHz -> above audible whine
+const int MOTOR_PWM_BITS = 8;      // duty range 0-255
 
-// --- CALIBRATION VARIABLES ---
-int maxVolume = 3000;
-int minVolume = 1000;
-int noiseFloor = 150;  // The "error range" (0 to 150 is considered silence)
-int stepSize = 100;    // How much the buttons change the values
+const int OLED_ADDR = 0x3C;
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
-// Button debounce timers to prevent double-clicking
-unsigned long lastButtonPress = 0;
-const int debounceDelay = 250; // Wait 250ms between button reads
+// ---------------------------------------------------------------------------
+//  TUNABLES — sampling & envelope
+// ---------------------------------------------------------------------------
+const int   WINDOW_SIZE = 100;  // analogReads per RMS window (~5-10 ms each)
+const float GAIN        = 5.0;  // software gain: the KY-037 gives tiny RMS
+                                // numbers (speech ~6, silence ~2.5), so we
+                                // multiply to spread the range out before
+                                // smoothing/thresholding.
 
+// EMA smoothing: env = (1-alpha)*env + alpha*newSample.
+// Higher alpha = reacts faster but jitters more.
+// One RMS window is ~7 ms, so 0.02 gives a ~0.4 s time constant: env rides
+// over the gaps between words and tracks sentence-level loudness — the same
+// mix of speech + gaps the volume calibration averages, so the two are in
+// matching units.
+const float ENV_ALPHA = 0.02;
+
+// ---------------------------------------------------------------------------
+//  TUNABLES — volume detection
+// ---------------------------------------------------------------------------
+const float QUIET_FACTOR = 0.6;               // below speechAvg*0.6 = too quiet
+const float LOUD_FACTOR  = 1.4;               // above speechAvg*1.4 = too loud
+const unsigned long VOLUME_TRIGGER_MS = 1500; // must persist this long to fire
+
+// ---------------------------------------------------------------------------
+//  TUNABLES — alerts, display, calibration
+// ---------------------------------------------------------------------------
+const unsigned long ALERT_COOLDOWN_MS = 3000; // min gap between any two alerts
+const unsigned long DISPLAY_CHECK_MS  = 2000; // how often to ping the OLED
+const unsigned long SILENCE_CAL_MS    = 5000; // length of the silent baseline
+
+const bool DEBUG_PLOT = false;  // true -> stream envelope + thresholds to the
+                                // Serial Plotter for tuning GAIN/factors
+
+// ---------------------------------------------------------------------------
+//  CALIBRATION RESULTS (set once in setup)
+// ---------------------------------------------------------------------------
+int   micCenter = 0;       // resting ADC value of the mic (DC offset)
+float noiseMeanSqRaw = 0;  // raw (un-gained) mean-square of room noise —
+                           // subtracted inside every RMS window so silence
+                           // reads ~0 instead of the noise floor
+float noiseRms  = 0;       // gained RMS of room noise (reporting only)
+float speechAvg = 0;       // gained, noise-subtracted RMS of normal speech
+float quietThreshold = 0;
+float loudThreshold  = 0;
+
+// ---------------------------------------------------------------------------
+//  RUNTIME STATE
+// ---------------------------------------------------------------------------
+float env = 0;             // smoothed volume envelope
+
+// millis() timestamps; 0 means "condition not currently active"
+unsigned long quietStart = 0;
+unsigned long loudStart  = 0;
+
+// alert pacing
+unsigned long lastAlertMs        = 0;
+unsigned long volumeBlockedUntil = 0;  // grace period after boot / alerts
+
+// display health
+bool displayOk = false;
+unsigned long lastDisplayCheck = 0;
+String lastMessage = "";
+int lastMessageSize = 1;
+
+// alert kinds (plain ints, not an enum — the Arduino builder's auto-generated
+// prototypes can choke on custom types in function signatures)
+const int ALERT_LOUD  = 0;
+const int ALERT_QUIET = 1;
+
+// ===========================================================================
+//  SETUP
+// ===========================================================================
 void setup() {
-  Serial.begin(115200); 
+  Serial.begin(115200);
+  delay(1000);  // give the Serial Monitor a moment to attach
 
-  // Initialize display
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+  pinMode(BTN_CALIBRATE,  INPUT_PULLUP);
+  pinMode(BTN_TEST_QUIET, INPUT_PULLUP);
+
+  ledcAttach(MOTOR_PIN, MOTOR_PWM_FREQ, MOTOR_PWM_BITS);
+  ledcWrite(MOTOR_PIN, 0);
+
+  initDisplay();
+
+  calibrateSilence();
+  calibrateVolume();
+
+  printCalibrationSummary();
+  showMessage("Nudge\nready!", 2);
+
+  // Seed the envelope at normal-speech level so we don't get an instant
+  // "too quiet" while it ramps up from zero, and give a short grace period.
+  env = speechAvg;
+  volumeBlockedUntil = millis() + 2000;
+}
+
+// ===========================================================================
+//  MAIN LOOP
+// ===========================================================================
+void loop() {
+  unsigned long now = millis();
+
+  checkDisplayAlive(now);   // recover the OLED if it dropped off the bus
+  handleTestButtons();      // manual haptic-pattern testing
+
+  // --- measure one window and update the envelope ---
+  float rms = readRmsWindow();
+  env = (1.0 - ENV_ALPHA) * env + ENV_ALPHA * rms;
+
+  if (DEBUG_PLOT) {
+    // Open Tools > Serial Plotter to watch these while tuning. Printed only
+    // every 4th window — at full loop speed the serial port can't keep up
+    // and the blocked writes would distort the sample timing.
+    static int plotDivider = 0;
+    if (++plotDivider >= 4) {
+      plotDivider = 0;
+      Serial.print("env:");       Serial.print(env);
+      Serial.print(" quietThr:"); Serial.print(quietThreshold);
+      Serial.print(" loudThr:");  Serial.println(loudThreshold);
+    }
   }
 
-  // Initialize motor PWM
-  ledcAttach(vPin, 20000, 8);
+  checkVolume(now);
+}
 
-  // Initialize Buttons
-  pinMode(btnMaxUpPin, INPUT_PULLUP);
-  pinMode(btnMaxDownPin, INPUT_PULLUP);
-  pinMode(btnMinUpPin, INPUT_PULLUP);
-  pinMode(btnMinDownPin, INPUT_PULLUP);
+// ===========================================================================
+//  SIGNAL MEASUREMENT
+// ===========================================================================
 
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println("System Ready");
-  display.display();
+// One RMS window: WINDOW_SIZE reads, deviation from the calibrated center,
+// NOISE-SUBTRACTED root-mean-square, then software gain. Used by calibration
+// AND detection so both always speak the same units.
+//
+// The noise subtraction is the key to the whole sketch: mic RMS measures
+// speech power PLUS room-noise power, so without it the envelope can never
+// fall below the noise floor — "too quiet" becomes unreachable. Powers add,
+// so we subtract the calibrated noise mean-square BEFORE the square root:
+// what's left is (an estimate of) the speech-only level. Silence now reads ~0.
+float readRmsWindow() {
+  long sumSq = 0;
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    long deviation = analogRead(MIC_PIN) - micCenter;
+    sumSq += deviation * deviation;
+  }
+  float meanSq = (float)sumSq / WINDOW_SIZE - noiseMeanSqRaw;
+  if (meanSq < 0) meanSq = 0;  // noise fluctuates; don't sqrt a negative
+  return GAIN * sqrt(meanSq);
+}
+
+// ===========================================================================
+//  DETECTION CHECKS
+// ===========================================================================
+
+void checkVolume(unsigned long now) {
+  if (now < volumeBlockedUntil) return;
+
+  // TOO QUIET: envelope must stay below threshold for the full trigger
+  // duration — short dips (pauses between words) reset nothing because the
+  // timer only clears when volume returns to the normal band.
+  if (env < quietThreshold) {
+    if (quietStart == 0) {
+      quietStart = now;
+    } else if (now - quietStart > VOLUME_TRIGGER_MS) {
+      fireAlert(ALERT_QUIET);
+    }
+  } else {
+    quietStart = 0;
+  }
+
+  // TOO LOUD: same pattern, other direction.
+  if (env > loudThreshold) {
+    if (loudStart == 0) {
+      loudStart = now;
+    } else if (now - loudStart > VOLUME_TRIGGER_MS) {
+      fireAlert(ALERT_LOUD);
+    }
+  } else {
+    loudStart = 0;
+  }
+}
+
+// ===========================================================================
+//  ALERTS
+// ===========================================================================
+
+// Shows the message, runs the haptic pattern (blocking — the mic is not
+// sampled while the motor pattern plays), then resets detection state so we
+// re-measure from scratch instead of instantly re-firing on stale data.
+void fireAlert(int kind) {
+  unsigned long now = millis();
+  if (now - lastAlertMs < ALERT_COOLDOWN_MS && lastAlertMs != 0) return;
+
+  switch (kind) {
+    case ALERT_LOUD:  showMessage("Too\nLoud!", 2);  patternTooLoud();  break;
+    case ALERT_QUIET: showMessage("Too\nQuiet!", 2); patternTooQuiet(); break;
+  }
+
+  resetDetectionState();
+}
+
+void resetDetectionState() {
+  unsigned long now = millis();
+  quietStart = 0;
+  loudStart  = 0;
+  lastAlertMs = now;
+  volumeBlockedUntil = now + ALERT_COOLDOWN_MS;
+}
+
+// Manual pattern testing.
+void handleTestButtons() {
+  if      (digitalRead(BTN_CALIBRATE)  == LOW) fireAlert(ALERT_LOUD);
+  else if (digitalRead(BTN_TEST_QUIET) == LOW) fireAlert(ALERT_QUIET);
+}
+
+// ===========================================================================
+//  HAPTIC PATTERNS
+// ===========================================================================
+
+// Smooth ramp DOWN in intensity: "bring it down".
+void patternTooLoud() {
+  for (int i = 255; i > 32; i -= 8) {
+    ledcWrite(MOTOR_PIN, i);
+    delay(50);
+  }
+  ledcWrite(MOTOR_PIN, 0);
+}
+
+// Smooth ramp UP in intensity: "bring it up".
+void patternTooQuiet() {
+  for (int i = 32; i < 255; i += 8) {
+    ledcWrite(MOTOR_PIN, i);
+    delay(50);
+  }
+  ledcWrite(MOTOR_PIN, 0);
+}
+
+// ===========================================================================
+//  CALIBRATION
+// ===========================================================================
+
+// Step 1: 5 s of silence. One pass computes both the mean (the mic's resting
+// center / DC offset) and the variance — the raw mean-square power of room
+// noise, which readRmsWindow() subtracts from every window from now on.
+void calibrateSilence() {
+  Serial.println("\n[1/2] Calibrating baseline — please stay quiet!");
+  showMessage("Cal 1/2\n\nStay\nquiet...", 1);
+
+  unsigned long long sum   = 0;  // 64-bit: 5 s of 12-bit reads overflows 32
+  unsigned long long sumSq = 0;
+  unsigned long n = 0;
+  unsigned long start = millis();
+  unsigned long lastDot = start;
+
+  while (millis() - start < SILENCE_CAL_MS) {
+    unsigned long long v = analogRead(MIC_PIN);
+    sum   += v;
+    sumSq += v * v;
+    n++;
+    if (millis() - lastDot >= 1000) {  // one progress dot per second
+      Serial.print(".");
+      lastDot += 1000;
+    }
+  }
+  Serial.println();
+
+  float mean   = (float)sum / n;
+  float meanSq = (float)sumSq / n;
+  micCenter = (int)mean;
+  // variance = E[x^2] - (E[x])^2 — the raw mean-square power of room noise.
+  float variance = meanSq - mean * mean;
+  if (variance < 0) variance = 0;  // guard against float rounding
+  noiseMeanSqRaw = variance;
+  noiseRms = GAIN * sqrt(variance);  // kept for the summary printout
+
+  Serial.print("  mic center = "); Serial.println(micCenter);
+  Serial.print("  noise RMS (gained) = "); Serial.println(noiseRms);
   delay(1000);
 }
 
-void loop() {
-  // 1. READ BUTTONS TO ADJUST THRESHOLDS
-  checkButtons();
+// Step 2: normal speaking volume. The user reads a sentence out loud and
+// presses the button when done. We average RMS windows measured with the
+// exact same readRmsWindow() used at runtime, so the threshold factors are
+// applied to like-for-like numbers.
+void calibrateVolume() {
+  Serial.println("\n[2/2] Calibrating normal speech volume.");
+  Serial.println("Read this aloud at your normal volume, then press the button:");
+  Serial.println("-------------------------------------------");
+  Serial.println("The quick brown fox jumps over the lazy dog");
+  Serial.println("-------------------------------------------");
+  showMessage("Cal 2/2\n\nRead aloud\nthen press\nbutton", 1);
 
-  // 2. SAMPLE THE MICROPHONE
-  int sampleWindow = 50; 
-  unsigned long startMillis = millis(); 
-  
-  // FIX: Start Min at max possible, and Max at min possible!
-  int signalMin = 4095; 
-  int signalMax = 0;    
-  
-  while (millis() - startMillis < sampleWindow) {
-    int sample = analogRead(micPin);
-    if (sample < 4095) {
-      if (sample > signalMax) { signalMax = sample; }
-      if (sample < signalMin) { signalMin = sample; }
+  double rmsSum = 0;
+  long windows = 0;
+  // Keep sampling until the button is pressed, but insist on at least one
+  // window so an accidental early press can't divide by zero.
+  while (digitalRead(BTN_CALIBRATE) == HIGH || windows == 0) {
+    rmsSum += readRmsWindow();
+    windows++;
+  }
+  waitForButtonRelease();
+
+  speechAvg = rmsSum / windows;
+  // With noise subtracted, silence sits near 0, so plain fractions of the
+  // speech average are meaningful thresholds.
+  quietThreshold = speechAvg * QUIET_FACTOR;
+  loudThreshold  = speechAvg * LOUD_FACTOR;
+
+  Serial.print("  speech avg (gained RMS) = "); Serial.println(speechAvg);
+  delay(500);
+}
+
+void waitForButtonRelease() {
+  while (digitalRead(BTN_CALIBRATE) == LOW) { delay(10); }
+  delay(250);  // debounce
+}
+
+void printCalibrationSummary() {
+  Serial.println("\n===== CALIBRATION SUMMARY =====");
+  Serial.print("mic center:      "); Serial.println(micCenter);
+  Serial.print("noise RMS:       "); Serial.println(noiseRms);
+  Serial.print("speech avg:      "); Serial.println(speechAvg);
+  Serial.print("quiet threshold: "); Serial.println(quietThreshold);
+  Serial.print("loud threshold:  "); Serial.println(loudThreshold);
+  Serial.println("===============================\n");
+}
+
+// ===========================================================================
+//  DISPLAY (with drop-out recovery)
+// ===========================================================================
+
+// (Re)initialize the OLED and restore our text settings. Safe to call again
+// after a bus drop — Adafruit_SSD1306::begin() only allocates its buffer the
+// first time.
+void initDisplay() {
+  displayOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+  if (displayOk) {
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.display();
+  } else {
+    Serial.println("!! OLED init failed — continuing without display");
+  }
+}
+
+// Every DISPLAY_CHECK_MS, ping the OLED's I2C address. If it stops ACKing
+// (motor noise / loose wire knocked it off the bus), re-init and redraw the
+// last message instead of leaving the screen dead.
+void checkDisplayAlive(unsigned long now) {
+  if (now - lastDisplayCheck < DISPLAY_CHECK_MS) return;
+  lastDisplayCheck = now;
+
+  Wire.beginTransmission(OLED_ADDR);
+  bool responding = (Wire.endTransmission() == 0);
+
+  if (!responding) {
+    displayOk = false;
+    Serial.println("!! OLED not responding — attempting re-init");
+  }
+
+  if (!displayOk) {
+    initDisplay();
+    if (displayOk) {
+      Serial.println("   OLED recovered");
+      if (lastMessage.length() > 0) showMessage(lastMessage, lastMessageSize);
     }
   }
-  
-  int peakToPeak = signalMax - signalMin;
-  
-  // Print for debugging
-  Serial.print("Volume Level: ");
-  Serial.print(peakToPeak);
-  Serial.print(" | Min: ");
-  Serial.print(minVolume);
-  Serial.print(" | Max: ");
-  Serial.println(maxVolume);
-
-  // 3. CHECK VOLUME AGAINST THRESHOLDS
-  if (peakToPeak > maxVolume) {
-    tooLoud();
-  } 
-  // Check if it's too quiet, BUT ensure it's above the noise floor
-  else if (peakToPeak < minVolume && peakToPeak > noiseFloor) {
-    tooQuiet();
-  }
+  // Note: if the screen still goes blank while ACKing (controller reset but
+  // bus alive), add `initDisplay();` at the top of showMessage() as a
+  // heavier-handed fix — and see the wiring notes in the project README.
 }
 
-// --- BUTTON LOGIC & CONSTRAINTS ---
-void checkButtons() {
-  // Only check buttons if enough time has passed since the last press
-  if (millis() - lastButtonPress > debounceDelay) {
-    
-    // INCREASE MAX
-    if (digitalRead(btnMaxUpPin) == LOW) {
-      // No constraint needed to go higher, but we can prevent it from exceeding 4095
-      if (maxVolume + stepSize <= 4095) {
-        maxVolume += stepSize;
-        sendToDisplay("Maximum: " + String(maxVolume));
-      }
-      lastButtonPress = millis();
-    }
-    
-    // DECREASE MAX
-    else if (digitalRead(btnMaxDownPin) == LOW) {
-      int newMax = maxVolume - stepSize;
-      int vDifference = newMax - minVolume;
-      
-      // Constraint: Difference must be 500 or greater
-      if (vDifference >= 500) {
-        maxVolume = newMax;
-        sendToDisplay("Maximum: " + String(maxVolume));
-      } else {
-        sendToDisplay("Limit Reached!"); // Optional warning
-      }
-      lastButtonPress = millis();
-    }
-    
-    // INCREASE MIN
-    else if (digitalRead(btnMinUpPin) == LOW) {
-      int newMin = minVolume + stepSize;
-      int vDifference = maxVolume - newMin;
-      
-      // Constraint: Difference must be 500 or greater
-      if (vDifference >= 500) {
-        minVolume = newMin;
-        sendToDisplay("Minimum: " + String(minVolume));
-      } else {
-        sendToDisplay("Limit Reached!");
-      }
-      lastButtonPress = millis();
-    }
-    
-    // DECREASE MIN
-    else if (digitalRead(btnMinDownPin) == LOW) {
-      // Make sure min volume doesn't drop into the noise floor
-      if (minVolume - stepSize > noiseFloor) {
-        minVolume -= stepSize;
-        sendToDisplay("Minimum: " + String(minVolume));
-      }
-      lastButtonPress = millis();
-    }
-  }
-}
+void showMessage(const String &msg, int textSize) {
+  lastMessage = msg;          // remembered so recovery can redraw it
+  lastMessageSize = textSize;
+  Serial.print("Display: ");
+  Serial.println(msg);
+  if (!displayOk) return;     // don't hang on a dead bus
 
-// --- MOTOR BEHAVIORS ---
-void tooLoud() {
-  sendToDisplay("Too Loud!");
-  for (int i = 255; i > 32; i -= 8) {
-    ledcWrite(vPin, i);
-    delay(50);
-  }
-  ledcWrite(vPin, 0);
-}
-
-void tooQuiet() {
-  sendToDisplay("Too Quiet!");
-  for (int i = 32; i < 255; i += 8) {
-    ledcWrite(vPin, i);
-    delay(50);
-  }
-  ledcWrite(vPin, 0);
-}
-
-void tooFast() {
-  sendToDisplay("Too Fast!");
-  for (int i = 0; i < 3; i++) {
-    ledcWrite(vPin, 255);
-    delay(100);
-    ledcWrite(vPin, 0);
-    delay(75);
-  }
-  for (int i = 100; i <= 500; i += 100) {
-    ledcWrite(vPin, 255);
-    delay(100);
-    ledcWrite(vPin, 0);
-    delay(i);
-  }
-}
-
-void tooSlow() {
-  sendToDisplay("Too Slow!");
-  for (int i = 500; i >= 100; i -= 100) {
-    ledcWrite(vPin, 255);
-    delay(100);
-    ledcWrite(vPin, 0);
-    delay(i);
-  }
-  for (int i = 0; i < 3; i++) {
-    ledcWrite(vPin, 255);
-    delay(100);
-    ledcWrite(vPin, 0);
-    delay(75);
-  }
-}
-
-// --- DISPLAY HELPER ---
-void sendToDisplay(String message) {
   display.clearDisplay();
   display.setCursor(0, 0);
-  
-  // Optional: Make font larger for these important alerts
-  display.setTextSize(2); 
-  display.println(message);
+  display.setTextSize(textSize);
+  display.println(msg);
   display.display();
-  
-  // Reset text size for next time
-  display.setTextSize(1); 
-  
-  Serial.print("Displaying: ");
-  Serial.println(message);
+  display.setTextSize(1);
 }
