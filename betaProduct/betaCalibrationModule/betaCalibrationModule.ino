@@ -389,7 +389,7 @@ void loop() {
   if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION > 3) {
     Serial.println("Holding down select button!");
     delay(250); // makes sure not to keep adding onto the selection if integer is bigger than 3 (meaning its in selection mode)
-  } else if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION <= 3) {
+  } else if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION < 3) {
     BUTTON_SELECTION = BUTTON_SELECTION + 3;
     mm_selection(BUTTON_SELECTION); // +3 is for darkening the box to indicate seletion is occuring
     delay(150); 
@@ -408,7 +408,7 @@ void loop() {
     BUTTON_SELECTION = BUTTON_SELECTION + 10;
   } else if (digitalRead(BTN_HOME) == LOW && BUTTON_SELECTION > 10) {
     delay(150);
-    BUTTON_SELECTION = 1;
+    BUTTON_SELECTION = BUTTON_SELECTION - 10;
     CHECK_VOLUME = false;
     checkVolume(now, CHECK_VOLUME);
     mm_selection(BUTTON_SELECTION);
