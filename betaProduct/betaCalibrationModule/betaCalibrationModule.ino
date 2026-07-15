@@ -1,11 +1,10 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/FreeSans9pt7b.h>
 
 const int MIC_PIN   = A0;   // now the piezo bone-conduction sensor, not the KY-037
 const int MOTOR_PIN = 5;
-
-const int BTN_CALIBRATE = 7;
 
 const int MOTOR_PWM_FREQ = 20000;
 const int MOTOR_PWM_BITS = 8;
@@ -59,10 +58,230 @@ unsigned long volumeBlockedUntil = 0;
 const int ALERT_LOUD  = 0;
 const int ALERT_QUIET = 1;
 
+// screen integers and interaction integers
+int BUTTON_SELECTION = 1; // Default starting position on main menu: starts by having "start" selected
+static const unsigned char PROGMEM image_arrow_right_bits[] = {0x08,0x04,0xfe,0x04,0x08}; // bitmap for arrow to appear
+bool CHECK_VOLUME = false; // bool to turn on/off nudge
+const int BTN_CALIBRATE  = 6;   // in loop(): tests the "too loud" pattern
+const int BTN_TEST_QUIET = 7;   // in loop(): tests the "too quiet" pattern
+const int BTN_MENU_UP = 0; // FILLER INT
+const int BTN_MENU_DOWN = 0; // FILLER INT
+const int BTN_MENU_SELECT = 0; // FILLER INT
+const int BTN_HOME = 0; // FILLER INT
+const int BTN_VOLUME_UP = 0; // FILLER INT
+const int BTN_VOLUME_DOWN = 0; // FILLER INT
 
+// ===========================================================================
+//  DISPLAY SCREENS
+// ===========================================================================
+
+void startButton() {
+
+  display.clearDisplay();
+
+  // Layer 1
+  display.drawRect(0, 0, 128, 64, 1);
+
+  // Layer 2
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  // Layer 4
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  // Layer 4
+  display.fillRect(40, 27, 56, 9, 1);
+
+  // Layer 5
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(54, 28);
+  display.print("START");
+
+  // Layer 4 copy 1
+  display.fillRect(36, 39, 56, 9, 1);
+
+  // Layer 5 copy 1
+  display.setCursor(38, 40);
+  display.print("CALIBRATE");
+
+  // arrow_right
+  display.drawBitmap(30, 29, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void startButtonSelected(){
+
+  display.clearDisplay();
+
+  // Layer 1
+  display.drawRect(0, 0, 128, 64, 1);
+
+  // Layer 2
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  // Layer 4
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  // Layer 4
+  display.drawRect(40, 27, 56, 9, 1);
+
+  // Layer 5
+  display.setFont();
+  display.setCursor(54, 28);
+  display.print("START");
+
+  // Layer 4 copy 1
+  display.fillRect(36, 39, 56, 9, 1);
+
+  // Layer 5 copy 1
+  display.setTextColor(0);
+  display.setCursor(38, 40);
+  display.print("CALIBRATE");
+
+  // arrow_right
+  display.drawBitmap(30, 29, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void calibrateButton(){
+  
+  display.clearDisplay();
+
+  // Layer 1
+  display.drawRect(0, 0, 128, 64, 1);
+
+  // Layer 2
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  // Layer 4
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  // Layer 4
+  display.fillRect(36, 27, 56, 9, 1);
+
+  // Layer 5
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(50, 28);
+  display.print("START");
+
+  // Layer 4 copy 1
+  display.fillRect(40, 39, 56, 9, 1);
+
+  // Layer 5 copy 1
+  display.setCursor(42, 40);
+  display.print("CALIBRATE");
+
+  // arrow_right
+  display.drawBitmap(30, 41, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void calibrateButtonSelected(){
+
+  display.clearDisplay();
+
+  // Layer 1
+  display.drawRect(0, 0, 128, 64, 1);
+
+  // Layer 2
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  // Layer 4
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  // Layer 4
+  display.fillRect(36, 27, 56, 9, 1);
+
+  // Layer 5
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(50, 28);
+  display.print("START");
+
+  // Layer 4 copy 1
+  display.drawRect(40, 39, 56, 9, 1);
+
+  // Layer 5 copy 1
+  display.setTextColor(1);
+  display.setCursor(42, 40);
+  display.print("CALIBRATE");
+
+  // arrow_right
+  display.drawBitmap(30, 41, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void listeningScreen(String volumeMessage, int x, int y) {
+
+  display.clearDisplay();
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(x, y);
+  display.print(volumeMessage);
+
+  display.display();
+
+}
+
+void nudgeReady() {
+
+  display.clearDisplay();
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(31, 27);
+  display.print("NUDGE");
+
+  display.setCursor(30, 47);
+  display.print("READY!");
+
+  display.display();
+
+}
 
 //  SETUP
 void setup() {
+
   Serial.begin(115200);
   delay(1000);
 
@@ -78,14 +297,48 @@ void setup() {
 
   printCalibrationSummary();
   showMessage("Nudge\nready!", 2);
+  delay(3000);
+  mm_selection(BUTTON_SELECTION);
 
   // Seed the envelope at normal-speech level so we don't get an instant
   // "too quiet" while it ramps up from zero, and give a short grace period.
   env = speechAvg;
   volumeBlockedUntil = millis() + 2000;
+
 }
 
+// ===========================================================================
+//  SELECTION AND EXECUTION FUNCTIONS
+// ===========================================================================
 
+void mm_selection(int button_select) {
+  // Button selection is assigned to different integers
+  const int start_button = 1;
+  const int calibrate_button = 2;
+  const int start_selected = 4;
+  const int calibrate_selected = 5;
+
+  // Switch case for changing the display when the integer value changes
+  switch (button_select) {
+    case start_button: { display.clearDisplay(); startButton(); break; }
+    case calibrate_button: { display.clearDisplay(); calibrateButton(); break; }
+    case start_selected: { display.clearDisplay(); startButtonSelected(); break; }
+    case calibrate_selected: { display.clearDisplay(); calibrateButtonSelected(); break; }  
+    default: break;
+  }
+}
+
+// Actually executes the command of the button we have selected
+void mm_execution(int button_select) {
+  unsigned long now = millis();
+
+  switch (button_select) {
+    case 1: { display.clearDisplay(); checkVolume(now, CHECK_VOLUME = true); break; } // "START" button execution
+    case 2: { display.clearDisplay(); calibrateSilence(); calibrateVolume(); break; } // "CALIBRATE" button execution
+    // case button_select == 3: { display.ClearDisplay(); } // "ADJUST" button execution
+    default: { break; }
+  }
+}
 
 //  MAIN LOOP
 void loop() {
@@ -108,10 +361,53 @@ void loop() {
     }
   }
 
-  checkVolume(now);
+  checkVolume(now, CHECK_VOLUME);
+
+  if (digitalRead(BTN_MENU_UP) == HIGH && BUTTON_SELECTION == 1) {
+    Serial.println("Top element already selected!");
+  } else if (digitalRead(BTN_MENU_UP) == HIGH && BUTTON_SELECTION != 1) {
+    BUTTON_SELECTION = BUTTON_SELECTION - 1;
+    mm_selection(BUTTON_SELECTION);
+    delay(150);
+  }
+
+  if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION == 2) {
+    Serial.println("Bottom element already selected!");
+  } else if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION != 2) {
+    BUTTON_SELECTION = BUTTON_SELECTION + 1;
+    mm_selection(BUTTON_SELECTION); // +1 is to simply move arrow on display for selection
+    delay(150); 
+  }
+
+  if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION > 3) {
+    Serial.println("Holding down select button!");
+    delay(250); // makes sure not to keep adding onto the selection if integer is bigger than 3 (meaning its in selection mode)
+  } else if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION <= 3) {
+    BUTTON_SELECTION = BUTTON_SELECTION + 3;
+    mm_selection(BUTTON_SELECTION); // +3 is for darkening the box to indicate seletion is occuring
+    delay(150); 
+  }
+  
+  if (BUTTON_SELECTION > 3 && digitalRead(BTN_MENU_SELECT) == LOW) {
+    BUTTON_SELECTION = BUTTON_SELECTION - 3;
+    delay(150);
+    mm_execution(BUTTON_SELECTION); // Actually executes what we have selected on the main menu (i.e; "Start" would start up the nudge process)
+  }
+
+  if (digitalRead(BTN_HOME) == HIGH && BUTTON_SELECTION > 10) { // Checks if button is getting reading, then checks if BUTTON_SELECTION is bigger than 10, indicating it is being held down
+    Serial.println("Holding down home button!");
+    delay(150);
+  } else if (digitalRead(BTN_HOME) == HIGH && BUTTON_SELECTION < 10) { // 
+    BUTTON_SELECTION = BUTTON_SELECTION + 10;
+  } else if (digitalRead(BTN_HOME) == LOW && BUTTON_SELECTION > 10) {
+    delay(150);
+    BUTTON_SELECTION = 1;
+    CHECK_VOLUME = false;
+    checkVolume(now, CHECK_VOLUME);
+    mm_selection(BUTTON_SELECTION);
+  }
+
 }
-
-
 
 //  SIGNAL MEASUREMENT
 
@@ -134,39 +430,40 @@ float readRmsWindow() {
   return GAIN * sqrt(meanSq);
 }
 
-
-
 //  DETECTION CHECKS
 
-void checkVolume(unsigned long now) {
-  if (now < volumeBlockedUntil) return;
-
-  // TOO QUIET: envelope must stay below threshold for the full trigger
-  // duration — short dips (pauses between words) reset nothing because the
-  // timer only clears when volume returns to the normal band.
-  if (env < quietThreshold) {
-    if (quietStart == 0) {
-      quietStart = now;
-    } else if (now - quietStart > VOLUME_TRIGGER_MS) {
-      fireAlert(ALERT_QUIET);
-    }
-  } else {
-    quietStart = 0;
+void checkVolume(unsigned long now, bool isChecking) {
+  if (!isChecking) {
+    Serial.println("Cannot check volume right now!");
   }
+  else if (isChecking) {
+    if (now < volumeBlockedUntil) return;
 
-  // TOO LOUD: same pattern, other direction.
-  if (env > loudThreshold) {
-    if (loudStart == 0) {
-      loudStart = now;
-    } else if (now - loudStart > VOLUME_TRIGGER_MS) {
-      fireAlert(ALERT_LOUD);
+    // TOO QUIET: envelope must stay below threshold for the full trigger
+    // duration — short dips (pauses between words) reset nothing because the
+    // timer only clears when volume returns to the normal band.
+    if (env < quietThreshold) {
+      if (quietStart == 0) {
+        quietStart = now;
+      } else if (now - quietStart > VOLUME_TRIGGER_MS) {
+        fireAlert(ALERT_QUIET);
+      }
+    } else {
+      quietStart = 0;
     }
-  } else {
-    loudStart = 0;
+
+    // TOO LOUD: same pattern, other direction.
+    if (env > loudThreshold) {
+      if (loudStart == 0) {
+        loudStart = now;
+      } else if (now - loudStart > VOLUME_TRIGGER_MS) {
+        fireAlert(ALERT_LOUD);
+      }
+    } else {
+      loudStart = 0;
+    }
   }
 }
-
-
 
 //  ALERTS
 
@@ -178,8 +475,8 @@ void fireAlert(int kind) {
   if (now - lastAlertMs < ALERT_COOLDOWN_MS && lastAlertMs != 0) return;
 
   switch (kind) {
-    case ALERT_LOUD:  showMessage("Too\nLoud!", 2);  patternTooLoud();  break;
-    case ALERT_QUIET: showMessage("Too\nQuiet!", 2); patternTooQuiet(); break;
+    case ALERT_LOUD:  listeningScreen("TOO LOUD!", 14, 37);  patternTooLoud();  break;
+    case ALERT_QUIET: listeningScreen("TOO QUIET!", 12, 37); patternTooQuiet(); break;
   }
 
   resetDetectionState();
@@ -191,9 +488,8 @@ void resetDetectionState() {
   loudStart  = 0;
   lastAlertMs = now;
   volumeBlockedUntil = now + ALERT_COOLDOWN_MS;
+  listeningScreen("LISTENING...", 10, 37);
 }
-
-
 
 //  HAPTIC PATTERNS
 
@@ -311,8 +607,6 @@ void printCalibrationSummary() {
   Serial.print("loud threshold:  "); Serial.println(loudThreshold);
   Serial.println("===============================\n");
 }
-
-
 
 //  DISPLAY
 
