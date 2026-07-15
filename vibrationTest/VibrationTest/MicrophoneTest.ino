@@ -1,12 +1,19 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/FreeSans9pt7b.h>
 
 const int MIC_PIN   = A0;
 const int MOTOR_PIN = 5;
 
 const int BTN_CALIBRATE  = 6;   // in loop(): tests the "too loud" pattern
 const int BTN_TEST_QUIET = 7;   // in loop(): tests the "too quiet" pattern
+const int BTN_MENU_UP = 0; // FILLER INT
+const int BTN_MENU_DOWN = 0; // FILLER INT
+const int BTN_MENU_SELECT = 0; // FILLER INT
+const int BTN_HOME = 0; // FILLER INT
+const int BTN_VOLUME_UP = 0; // FILLER INT
+const int BTN_VOLUME_DOWN = 0; // FILLER INT
 
 const int MOTOR_PWM_FREQ = 20000;  // 20 kHz -> above audible whine
 const int MOTOR_PWM_BITS = 8;      // duty range 0-255
@@ -83,10 +90,347 @@ int lastMessageSize = 1;
 // prototypes can choke on custom types in function signatures)
 const int ALERT_LOUD  = 0;
 const int ALERT_QUIET = 1;
+bool CHECK_VOLUME = false; // bool to turn on/off nudge
+
+// screen integers: used to adjust what display is showing when on the main menu
+int BUTTON_SELECTION = 1; // Default starting position on main menu: starts by having "start" selected
+static const unsigned char PROGMEM image_arrow_right_bits[] = {0x08,0x04,0xfe,0x04,0x08};
+// ^^ right arrow bit map
+
+// ===========================================================================
+//  DISPLAY SCREENS
+// ===========================================================================
+
+void startButton() {
+  
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.fillRect(29, 25, 71, 9, 1);
+
+  display.fillRect(29, 36, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.fillRect(29, 47, 71, 9, 1);
+
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 27, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void startButtonSelected(){
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.drawRect(29, 25, 71, 9, 1);
+
+  display.fillRect(29, 36, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.fillRect(29, 47, 71, 9, 1);
+
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setTextColor(1);
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 27, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void calibrateButton(){
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.fillRect(29, 25, 71, 9, 1);
+
+  display.fillRect(29, 36, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.fillRect(29, 47, 71, 9, 1);
+
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 38, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void calibrateButtonSelected(){
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.fillRect(29, 25, 71, 9, 1);
+
+  display.drawRect(29, 36, 71, 9, 1);
+
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.fillRect(29, 47, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 38, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void adjustButton(){
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.fillRect(29, 25, 71, 9, 1);
+
+  display.fillRect(29, 36, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.fillRect(29, 47, 71, 9, 1);
+
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 49, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void adjustButtonSelected(){
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(12, 17);
+  display.print("THE NUDGE");
+
+  display.fillRect(29, 25, 71, 9, 1);
+
+  display.fillRect(29, 36, 71, 9, 1);
+
+  display.setTextColor(0);
+  display.setFont();
+  display.setCursor(38, 37);
+  display.print("CALIBRATE");
+
+  display.drawRect(29, 47, 71, 9, 1);
+
+  display.setTextColor(1);
+  display.setCursor(47, 48);
+  display.print("ADJUST");
+
+  display.setTextColor(0);
+  display.setCursor(50, 26);
+  display.print("START");
+
+  display.drawBitmap(19, 49, image_arrow_right_bits, 7, 5, 1);
+
+  display.display();
+
+}
+
+void listeningScreen(String volumeMessage, int x, int y) {
+
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(x, y);
+  display.print(volumeMessage);
+
+  display.display();
+
+}
+
+void nudgeReady() {
+
+  display.clearDisplay();
+  display.drawRect(0, 0, 128, 64, 1);
+
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(53, 29);
+  display.print("");
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(31, 27);
+  display.print("NUDGE");
+
+  display.setCursor(30, 47);
+  display.print("READY!");
+
+  display.display();
+
+}
+
+// void adjustScreen() {
+
+// display.drawRect(0, 0, 128, 64, 1);
+
+// display.setTextColor(1);
+// display.setTextWrap(false);
+// display.setCursor(53, 29);
+// display.print("");
+
+// display.setCursor(19, 28);
+// display.print("MAXIMUM:");
+
+// display.setFont(&FreeSans9pt7b);
+// display.setCursor(29, 18);
+// display.print("ADJUST");
+
+// display.setFont();
+// display.setCursor(19, 45);
+// display.print("MINIMUM:");
+
+// display.setFont(&FreeSans9pt7b);
+// display.setCursor(66, 37);
+// display.print("3000");
+
+// display.setCursor(71, 54);
+// display.print("500");
+
+// display.display();
+
+// } 
+
+// ^^ The code above is commented out temporarily
+
+//
+// BUTTON FUNCTIONALITIES
+// 
+void mm_selection(int button_select) {
+  // Button selection is assigned to different integers
+  const int start_button = 1;
+  const int calibrate_button = 2;
+  const int adjust_button = 3;
+  const int start_selected = 4;
+  const int calibrate_selected = 5;
+  const int adjust_selected = 6;
+
+  // Switch case for changing the display when the integer value changes
+  switch (button_select) {
+    case start_button: { display.clearDisplay(); startButton(); break; }
+    case calibrate_button: { display.clearDisplay(); calibrateButton(); break; }
+    case adjust_button: { display.clearDisplay(); adjustButton(); break; }
+    case start_selected: { display.clearDisplay(); startButtonSelected(); break; }
+    case calibrate_selected: { display.clearDisplay(); calibrateButtonSelected(); break; }  
+    // case adjust_selected: { display.clearDisplay(); }
+    default: break;
+  }
+}
+
+// Actually executes the command of the button we have selected
+void mm_execution(int button_select) {
+  unsigned long now = millis();
+
+  switch (button_select) {
+    case 1: { display.clearDisplay(); checkVolume(now); break; } // "START" button execution
+    case 2: { display.clearDisplay(); calibrateSilence(); calibrateVolume(); break; } // "CALIBRATE" button execution
+    // case button_select == 3: { display.ClearDisplay(); } // "ADJUST" button execution
+    default: { break; }
+  }
+}
 
 // ===========================================================================
 //  SETUP
 // ===========================================================================
+
 void setup() {
   Serial.begin(115200);
   delay(1000);  // give the Serial Monitor a moment to attach
@@ -99,16 +443,18 @@ void setup() {
 
   initDisplay();
 
-  calibrateSilence();
-  calibrateVolume();
+  mm_selection(BUTTON_SELECTION);
 
-  printCalibrationSummary();
-  showMessage("Nudge\nready!", 2);
+  // calibrateSilence();
+  // calibrateVolume();
 
-  // Seed the envelope at normal-speech level so we don't get an instant
-  // "too quiet" while it ramps up from zero, and give a short grace period.
-  env = speechAvg;
-  volumeBlockedUntil = millis() + 2000;
+  // printCalibrationSummary();
+  // showMessage("Nudge\nready!", 2);
+
+  // // Seed the envelope at normal-speech level so we don't get an instant
+  // // "too quiet" while it ramps up from zero, and give a short grace period.
+  // env = speechAvg;
+  // volumeBlockedUntil = millis() + 2000;
 }
 
 // ===========================================================================
@@ -137,7 +483,36 @@ void loop() {
     }
   }
 
-  checkVolume(now);
+  if (digitalRead(BTN_MENU_UP) == HIGH && BUTTON_SELECTION == 1) {
+    Serial.println("Top element already selected!");
+  } else if (digitalRead(BTN_MENU_UP) == HIGH) {
+    BUTTON_SELECTION = BUTTON_SELECTION - 1;
+    mm_selection(BUTTON_SELECTION);
+    delay(50);
+  }
+
+  if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION == 3) {
+    Serial.println("Bottom element already selected!");
+  } else if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION != 3) {
+    BUTTON_SELECTION = BUTTON_SELECTION + 1;
+    mm_selection(BUTTON_SELECTION); // +1 is to simply move arrow on display for selection
+    delay(250); // lowers sensitivity of press, so it doesn't go all the way down.
+  }
+
+  if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION > 3) {
+    Serial.println("Holding down select button!");
+    delay(250); // makes sure not to keep adding onto the selection if integer is bigger than 3 (meaning its in selection mode)
+  } else {
+    BUTTON_SELECTION = BUTTON_SELECTION + 3;
+    mm_selection(BUTTON_SELECTION); // +3 is for darkening the box to indicate seletion is occuring
+    delay(250); // lowers sensitivity of press, so it doesn't go all the way down.
+  }
+  
+  if (BUTTON_SELECTION > 3 && digitalRead(BTN_MENU_SELECT) == LOW) {
+    BUTTON_SELECTION = BUTTON_SELECTION - 3;
+    delay(250);
+    mm_execution(BUTTON_SELECTION); // Actually executes what we have selected on the main menu (i.e; "Start" would start up the nudge process)
+  }
 }
 
 // ===========================================================================
@@ -179,9 +554,13 @@ void checkVolume(unsigned long now) {
       quietStart = now;
     } else if (now - quietStart > VOLUME_TRIGGER_MS) {
       fireAlert(ALERT_QUIET);
+      display.clearDisplay();
+      listeningScreen("TOO QUIET!", 12, 38);
     }
   } else {
     quietStart = 0;
+    display.clearDisplay();
+    listeningScreen("LISTENING...", 10, 37);
   }
 
   // TOO LOUD: same pattern, other direction.
@@ -190,9 +569,13 @@ void checkVolume(unsigned long now) {
       loudStart = now;
     } else if (now - loudStart > VOLUME_TRIGGER_MS) {
       fireAlert(ALERT_LOUD);
+      display.clearDisplay();
+      listeningScreen("TOO LOUD!", 14, 38);
     }
   } else {
     loudStart = 0;
+    display.clearDisplay();
+    listeningScreen("LISTENING...", 10, 37);
   }
 }
 
