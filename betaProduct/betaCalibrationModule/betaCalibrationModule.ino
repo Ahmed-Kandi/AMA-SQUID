@@ -2,7 +2,12 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-const int MIC_PIN   = A0;   // now the piezo bone-conduction sensor, not the KY-037
+//  BOARD: Adafruit Feather ESP32-C6
+//
+// Pin numbers here are C6 GPIOs and do NOT carry to other boards — on an
+// ESP32-WROOM-32D, IO7 sits on the internal SPI flash (won't boot) and IO5 is a
+// strapping pin. If this ever moves boards, re-derive the whole map.
+const int MIC_PIN   = A0;   // piezo vibration sensor
 const int MOTOR_PIN = 5;
 
 const int BTN_CALIBRATE = 7;
@@ -30,15 +35,15 @@ const float GAIN = 5.0;
 const float ENV_ALPHA = 0.02;
 
 //  TUNABLES — volume detection
-const float QUIET_FACTOR = 0.6;               // below speechAvg*0.6 = too quiet
-const float LOUD_FACTOR  = 1.4;               // above speechAvg*1.4 = too loud
+const float QUIET_FACTOR = 0.8;               // below speechAvg*this = too quiet
+const float LOUD_FACTOR  = 1.3;               // above speechAvg*this = too loud
 const unsigned long VOLUME_TRIGGER_MS = 1500; // must persist this long to fire
 
 //  TUNABLES — alerts, display, calibration
 const unsigned long ALERT_COOLDOWN_MS = 3000; // min gap between any two alerts
 const unsigned long SILENCE_CAL_MS    = 5000; // length of the silent baseline
 
-const bool DEBUG_PLOT = false;  // true -> stream envelope + thresholds
+const bool DEBUG_PLOT = true;  // true -> stream envelope + thresholds
 
 //  CALIBRATION RESULTS (set once in setup)
 int   micCenter = 0;       // resting ADC value of the mic (DC offset)
@@ -47,6 +52,7 @@ float noiseRms  = 0;       // gained RMS of room noise (reporting only)
 float speechAvg = 0;       // gained, noise-subtracted RMS of normal speech
 float quietThreshold = 0;
 float loudThreshold  = 0;
+float windowMs       = 0;  // measured, not assumed — see measureWindowRate()
 
 //  RUNTIME STATE
 float env = 0;             // smoothed volume envelope
@@ -76,6 +82,7 @@ void setup() {
   calibrateSilence();
   calibrateVolume();
 
+  measureWindowRate();  // needs the calibration values, so it runs after them
   printCalibrationSummary();
   showMessage("Nudge\nready!", 2);
 
@@ -302,6 +309,17 @@ void waitForButtonRelease() {
   delay(250);
 }
 
+// How long one RMS window actually takes. It matters because the envelope's
+// time constant is windowMs / ENV_ALPHA — so analogRead() speed silently sets
+// how fast the whole detector reacts, and the silence floor's pause behaviour
+// depends on it. Expect ~7 ms here, giving ~0.35 s. Worth a glance after any
+// change to WINDOW_SIZE, the sensor, or the board.
+void measureWindowRate() {
+  unsigned long t0 = micros();
+  for (int i = 0; i < 20; i++) readRmsWindow();
+  windowMs = (micros() - t0) / 20000.0;  // 20 windows, µs -> ms
+}
+
 void printCalibrationSummary() {
   Serial.println("\n===== CALIBRATION SUMMARY =====");
   Serial.print("mic center:      "); Serial.println(micCenter);
@@ -309,6 +327,9 @@ void printCalibrationSummary() {
   Serial.print("speech avg:      "); Serial.println(speechAvg);
   Serial.print("quiet threshold: "); Serial.println(quietThreshold);
   Serial.print("loud threshold:  "); Serial.println(loudThreshold);
+  Serial.print("window:          "); Serial.print(windowMs);   Serial.println(" ms");
+  Serial.print("env time const:  "); Serial.print(windowMs / ENV_ALPHA / 1000.0);
+  Serial.println(" s   (was ~0.35 s on the C6)");
   Serial.println("===============================\n");
 }
 
