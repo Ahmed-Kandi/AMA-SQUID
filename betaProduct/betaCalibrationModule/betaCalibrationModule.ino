@@ -65,15 +65,40 @@ const int ALERT_LOUD  = 0;
 const int ALERT_QUIET = 1;
 
 // screen integers and interaction integers
-int BUTTON_SELECTION = 1; // Default starting position on main menu: starts by having "start" selected
+const int MENU_START_ITEM = 1;
+const int MENU_CALIBRATE_ITEM = 2;
+const int MENU_SELECT_OFFSET = 3;
+const int MENU_HOME_OFFSET = 10;
+const int MENU_SELECTED_START = MENU_START_ITEM + MENU_SELECT_OFFSET;
+const int MENU_SELECTED_CALIBRATE = MENU_CALIBRATE_ITEM + MENU_SELECT_OFFSET;
+
+enum MenuMode {
+  MENU_NORMAL,
+  MENU_SELECTED,
+  MENU_ACTION
+};
+
+MenuMode menuMode = MENU_NORMAL;
+
+int BUTTON_SELECTION = MENU_START_ITEM; // Default starting position on main menu: starts by having "start" selected
 static const unsigned char PROGMEM image_arrow_right_bits[] = {0x08,0x04,0xfe,0x04,0x08}; // bitmap for arrow to appear
 bool CHECK_VOLUME = false; // bool to turn on/off nudge
+bool selectionActive = false;
+bool listeningMode = false;
+static bool prevUpState = false;
+static bool prevDownState = false;
+static bool prevSelectState = false;
+static bool prevHomeState = false;
+static unsigned long lastMenuEventMs = 0;
+static unsigned long inputLockUntil = 0;
+const unsigned long MENU_DEBOUNCE_MS = 80;
+const unsigned long INPUT_LOCK_MS = 250;
 const int BTN_CALIBRATE  = 6;   // in loop(): tests the "too loud" pattern
-const int BTN_TEST_QUIET = 7;   // in loop(): tests the "too quiet" pattern
-const int BTN_MENU_UP = 0; // FILLER INT
-const int BTN_MENU_DOWN = 0; // FILLER INT
-const int BTN_MENU_SELECT = 0; // FILLER INT
-const int BTN_HOME = 0; // FILLER INT
+const int BTN_TEST_QUIET = 0;   // in loop(): tests the "too quiet" pattern
+const int BTN_MENU_UP = 8; // FILLER INT
+const int BTN_MENU_DOWN = 7; // FILLER INT
+const int BTN_MENU_SELECT = 6; // FILLER INT
+const int BTN_HOME = 9; // FILLER INT
 const int BTN_VOLUME_UP = 0; // FILLER INT
 const int BTN_VOLUME_DOWN = 0; // FILLER INT
 
@@ -292,6 +317,10 @@ void setup() {
   delay(1000);
 
   pinMode(BTN_CALIBRATE,  INPUT_PULLUP);
+  pinMode(BTN_MENU_UP,    INPUT_PULLUP);
+  pinMode(BTN_MENU_DOWN,  INPUT_PULLUP);
+  pinMode(BTN_MENU_SELECT, INPUT_PULLUP);
+  pinMode(BTN_HOME,       INPUT_PULLUP);
 
   ledcAttach(MOTOR_PIN, MOTOR_PWM_FREQ, MOTOR_PWM_BITS);
   ledcWrite(MOTOR_PIN, 0);
@@ -303,7 +332,7 @@ void setup() {
 
   measureWindowRate();  // needs the calibration values, so it runs after them
   printCalibrationSummary();
-  showMessage("Nudge\nready!", 2);
+  nudgeReady();
   delay(3000);
   mm_selection(BUTTON_SELECTION);
 
@@ -336,14 +365,44 @@ void mm_selection(int button_select) {
 }
 
 // Actually executes the command of the button we have selected
+bool actionInProgress = false;
+
 void mm_execution(int button_select) {
   unsigned long now = millis();
 
+  if (actionInProgress) return;
+  actionInProgress = true;
+
   switch (button_select) {
-    case 1: { display.clearDisplay(); checkVolume(now, CHECK_VOLUME = true); break; } // "START" button execution
-    case 2: { display.clearDisplay(); calibrateSilence(); calibrateVolume(); break; } // "CALIBRATE" button execution
-    // case button_select == 3: { display.ClearDisplay(); } // "ADJUST" button execution
+    case 1: {
+      CHECK_VOLUME = true;
+      listeningMode = true;
+      selectionActive = false;
+      inputLockUntil = millis() + INPUT_LOCK_MS;
+      listeningScreen("LISTENING...", 10, 37);
+      break;
+    }
+    case 2: {
+      display.clearDisplay();
+      calibrateSilence();
+      calibrateVolume();
+      nudgeReady();
+      delay(3000);
+      break;
+    }
     default: { break; }
+  }
+
+  actionInProgress = false;
+  selectionActive = false;
+  BUTTON_SELECTION = MENU_START_ITEM;
+  prevUpState = (digitalRead(BTN_MENU_UP) == LOW);
+  prevDownState = (digitalRead(BTN_MENU_DOWN) == LOW);
+  prevSelectState = (digitalRead(BTN_MENU_SELECT) == LOW);
+  prevHomeState = (digitalRead(BTN_HOME) == LOW);
+  lastMenuEventMs = millis();
+  if (button_select != 1) {
+    mm_selection(BUTTON_SELECTION);
   }
 }
 
@@ -370,50 +429,114 @@ void loop() {
 
   checkVolume(now, CHECK_VOLUME);
 
-  if (digitalRead(BTN_MENU_UP) == HIGH && BUTTON_SELECTION == 1) {
-    Serial.println("Top element already selected!");
-  } else if (digitalRead(BTN_MENU_UP) == HIGH && BUTTON_SELECTION != 1) {
-    BUTTON_SELECTION = BUTTON_SELECTION - 1;
+  const bool upPressed = (digitalRead(BTN_MENU_UP) == LOW);
+  const bool downPressed = (digitalRead(BTN_MENU_DOWN) == LOW);
+  const bool selectPressed = (digitalRead(BTN_MENU_SELECT) == LOW);
+  const bool homePressed = (digitalRead(BTN_HOME) == LOW);
+
+  if (millis() < inputLockUntil) {
+    prevUpState = upPressed;
+    prevDownState = downPressed;
+    prevSelectState = selectPressed;
+    prevHomeState = homePressed;
+    return;
+  }
+
+  if (listeningMode) {
+    if (selectPressed && !prevSelectState) {
+      listeningMode = false;
+      CHECK_VOLUME = false;
+      selectionActive = false;
+      BUTTON_SELECTION = MENU_START_ITEM;
+      inputLockUntil = millis() + INPUT_LOCK_MS;
+      prevUpState = upPressed;
+      prevDownState = downPressed;
+      prevSelectState = selectPressed;
+      prevHomeState = homePressed;
+      lastMenuEventMs = millis();
+      mm_selection(BUTTON_SELECTION);
+      return;
+    }
+
+    prevUpState = upPressed;
+    prevDownState = downPressed;
+    prevSelectState = selectPressed;
+    prevHomeState = homePressed;
+    return;
+  }
+
+  if (actionInProgress) {
+    prevUpState = upPressed;
+    prevDownState = downPressed;
+    prevSelectState = selectPressed;
+    prevHomeState = homePressed;
+    return;
+  }
+
+  // Release the selected item immediately, even if it happened very quickly
+  // after the press edge. That prevents a short tap from leaving the menu in a
+  // half-selected state and requiring a second button press.
+  if (!selectPressed && prevSelectState && BUTTON_SELECTION > 3) {
+    const int actionSelection = BUTTON_SELECTION - MENU_SELECT_OFFSET;
+    BUTTON_SELECTION = actionSelection;
+    selectionActive = false;
+    prevUpState = upPressed;
+    prevDownState = downPressed;
+    prevSelectState = selectPressed;
+    prevHomeState = homePressed;
+    lastMenuEventMs = millis();
+    mm_execution(BUTTON_SELECTION);
+    return;
+  }
+
+  if ((millis() - lastMenuEventMs) < MENU_DEBOUNCE_MS) {
+    prevUpState = upPressed;
+    prevDownState = downPressed;
+    prevSelectState = selectPressed;
+    prevHomeState = homePressed;
+    return;
+  }
+
+  // Ignore all non-home input while an action is running.
+  if (actionInProgress) {
+    return;
+  }
+
+  // Only move the highlight while the menu is in its normal unselected state.
+  if (!selectionActive) {
+    if (upPressed && !prevUpState) {
+      if (BUTTON_SELECTION == MENU_START_ITEM) {
+        Serial.println("Top element already selected!");
+      } else if (BUTTON_SELECTION == MENU_CALIBRATE_ITEM) {
+        BUTTON_SELECTION = MENU_START_ITEM;
+        mm_selection(BUTTON_SELECTION);
+        lastMenuEventMs = millis();
+      }
+    }
+
+    if (downPressed && !prevDownState) {
+      if (BUTTON_SELECTION == MENU_CALIBRATE_ITEM) {
+        Serial.println("Bottom element already selected!");
+      } else if (BUTTON_SELECTION == MENU_START_ITEM) {
+        BUTTON_SELECTION = MENU_CALIBRATE_ITEM;
+        mm_selection(BUTTON_SELECTION);
+        lastMenuEventMs = millis();
+      }
+    }
+  }
+
+  // Select: press highlights, release executes the highlighted item.
+  if (selectPressed && !prevSelectState && BUTTON_SELECTION < 3) {
+    BUTTON_SELECTION = BUTTON_SELECTION + MENU_SELECT_OFFSET;
+    selectionActive = true;
     mm_selection(BUTTON_SELECTION);
-    delay(150);
+    lastMenuEventMs = millis();
   }
 
-  if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION == 2) {
-    Serial.println("Bottom element already selected!");
-  } else if (digitalRead(BTN_MENU_DOWN) == HIGH && BUTTON_SELECTION != 2) {
-    BUTTON_SELECTION = BUTTON_SELECTION + 1;
-    mm_selection(BUTTON_SELECTION); // +1 is to simply move arrow on display for selection
-    delay(150); 
-  }
-
-  if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION > 3) {
-    Serial.println("Holding down select button!");
-    delay(250); // makes sure not to keep adding onto the selection if integer is bigger than 3 (meaning its in selection mode)
-  } else if (digitalRead(BTN_MENU_SELECT) == HIGH && BUTTON_SELECTION < 3) {
-    BUTTON_SELECTION = BUTTON_SELECTION + 3;
-    mm_selection(BUTTON_SELECTION); // +3 is for darkening the box to indicate seletion is occuring
-    delay(150); 
-  }
-  
-  if (BUTTON_SELECTION > 3 && digitalRead(BTN_MENU_SELECT) == LOW) {
-    BUTTON_SELECTION = BUTTON_SELECTION - 3;
-    delay(150);
-    mm_execution(BUTTON_SELECTION); // Actually executes what we have selected on the main menu (i.e; "Start" would start up the nudge process)
-  }
-
-  if (digitalRead(BTN_HOME) == HIGH && BUTTON_SELECTION > 10) { // Checks if button is getting reading, then checks if BUTTON_SELECTION is bigger than 10, indicating it is being held down
-    Serial.println("Holding down home button!");
-    delay(150);
-  } else if (digitalRead(BTN_HOME) == HIGH && BUTTON_SELECTION < 10) { // 
-    BUTTON_SELECTION = BUTTON_SELECTION + 10;
-  } else if (digitalRead(BTN_HOME) == LOW && BUTTON_SELECTION > 10) {
-    delay(150);
-    BUTTON_SELECTION = BUTTON_SELECTION - 10;
-    CHECK_VOLUME = false;
-    checkVolume(now, CHECK_VOLUME);
-    mm_selection(BUTTON_SELECTION);
-  }
-
+  prevUpState = upPressed;
+  prevDownState = downPressed;
+  prevSelectState = selectPressed;
+  prevHomeState = homePressed;
 }
 
 //  SIGNAL MEASUREMENT
@@ -441,7 +564,7 @@ float readRmsWindow() {
 
 void checkVolume(unsigned long now, bool isChecking) {
   if (!isChecking) {
-    Serial.println("Cannot check volume right now!");
+    return;
   }
   else if (isChecking) {
     if (now < volumeBlockedUntil) return;
@@ -578,7 +701,7 @@ void calibrateVolume() {
   Serial.println("-------------------------------------------");
   Serial.println("The quick brown fox jumps over the lazy dog");
   Serial.println("-------------------------------------------");
-  showMessage("Cal 2/2\n\nRead aloud:\n\n'The quick brown\nfox jumps over\nthe lazy dog'\nthen press button", 1);
+  showMessage("Cal 2/2\n\nRead aloud:\n\n'The quick brown\nfox jumps over\nthe lazy dog'\nthen press select", 1);
 
   double rmsSum = 0;
   long windows = 0;
