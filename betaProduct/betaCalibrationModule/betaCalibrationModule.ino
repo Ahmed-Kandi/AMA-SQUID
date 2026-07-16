@@ -41,6 +41,7 @@ const unsigned long VOLUME_TRIGGER_MS = 1500; // must persist this long to fire
 //  TUNABLES — alerts, display, calibration
 const unsigned long ALERT_COOLDOWN_MS = 3000; // min gap between any two alerts
 const unsigned long SILENCE_CAL_MS    = 5000; // length of the silent baseline
+const unsigned long CALIBRATE_VOLUME_TIMEOUT_MS = 15000; // auto-finish if the user waits 15 s
 
 const bool DEBUG_PLOT = true;  // true -> stream envelope + thresholds
 
@@ -705,13 +706,27 @@ void calibrateVolume() {
 
   double rmsSum = 0;
   long windows = 0;
-  // Keep sampling until the button is pressed, but insist on at least one
-  // window so an accidental early press can't divide by zero.
-  while (digitalRead(BTN_CALIBRATE) == HIGH || windows == 0) {
+  unsigned long start = millis();
+  bool buttonPressed = false;
+
+  // Keep sampling until the user presses the button or the timeout expires.
+  while (!buttonPressed && (millis() - start) < CALIBRATE_VOLUME_TIMEOUT_MS) {
+    buttonPressed = (digitalRead(BTN_CALIBRATE) == LOW);
     rmsSum += readRmsWindow();
     windows++;
   }
-  waitForButtonRelease();
+
+  if (buttonPressed) {
+    waitForButtonRelease();
+  } else {
+    Serial.println("No input detected; finishing calibration automatically after 15 seconds.");
+    delay(500);
+  }
+
+  if (windows == 0) {
+    rmsSum += readRmsWindow();
+    windows = 1;
+  }
 
   speechAvg = rmsSum / windows;
   // With noise subtracted, silence sits near 0, so plain fractions of the
