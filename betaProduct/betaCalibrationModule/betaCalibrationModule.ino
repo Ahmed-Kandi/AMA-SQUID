@@ -286,6 +286,13 @@ void listeningScreen(String volumeMessage, int x, int y) {
   display.setCursor(x, y);
   display.print(volumeMessage);
 
+  display.fillRect(39, 49, 51, 11, 1);
+
+  display.setCursor(53, 51);
+  display.print("HOME");
+
+  display.drawBitmap(29, 52, image_arrow_right_bits, 7, 5, 1);
+
   display.display();
 
 }
@@ -648,8 +655,6 @@ void patternTooQuiet() {
   }
   ledcWrite(MOTOR_PIN, 0);
 }
-
-
 
 //  CALIBRATION
 
